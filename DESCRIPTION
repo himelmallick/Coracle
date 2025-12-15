@@ -1,11 +1,29 @@
 Package: Coracle
-Title: What the Package Does (One Line, Title Case)
-Version: 0.0.0.9000
-Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
-License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
-    license
+Type: Package
+Title: Conformalized Multiview Learning
+Version: 0.1.0
+Authors@R: c(
+    person(
+      "Saptarshi", "Roy",
+      email = "roys8001@tamu.edu",
+      role = c("aut")
+    ),
+    person(
+      "Sreya", "Sarkar",
+      email = "sreya-sarkar@uiowa.edu",
+      role = c("aut")
+    ),
+    person(
+      "Himel", "Mallick",
+      email = "him4004@med.cornell.edu",
+      role = c("aut", "cre")
+    )
+  )
+Description: Coracle is a conformalized framework for multimodal AI that seamlessly adapts to early, late, and intermediate fusion. It provides theoretical marginal confidence guarantees and achieves valid finite-sample coverage without relying on distributional assumptions.
+License: MIT + file LICENSE
 Encoding: UTF-8
+Remotes: 
+  himelmallick/BayesCOOP,
+  himelmallick/IntegratedLearner
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
