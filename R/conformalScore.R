@@ -9,6 +9,10 @@
 #' \emph{IntegratedLearner} object. For intermediate fusion, this should be a
 #' \emph{BayesCOOP} object.
 #'
+#' @param data_calib
+#' Calibration data list containing feature_table, feature_metadata,
+#' and sample_metadata. See \emph{IntegratedLearner} for details.
+#'
 #' @param fusion_choice
 #' Fusion strategy to use. One of \code{"early"}, \code{"intermediate"}, or
 #' \code{"late"}. Default is \code{"early"}.
@@ -24,10 +28,10 @@
 #' \item{fit}{Fitted model object.}
 #' \item{conformal_scores}{Vector of conformal scores.}
 #'
-#' @importFrom stats quantile
+#' @importFrom stats quantile predict
 #'
 #' @export
-conformalScore <- function(fit,
+conformalScore <- function(fit, data_calib,
                            fusion_choice = "early",
                            conf_level = 0.95) {
 
@@ -41,7 +45,7 @@ conformalScore <- function(fit,
     stop("`conf_level` must be a number strictly between 0 and 1.", call. = FALSE)
   }
 
-  fusion_choice <- match.arg(fusion_choice)
+  trueY <- data_calib$sample_metadata$Y
 
   ## Extract calibration data
   if (fusion_choice %in% c("early", "late")) {
@@ -51,28 +55,26 @@ conformalScore <- function(fit,
            call. = FALSE)
     }
 
-    calib.pred <- fit$validPrediction
-    trueY <- fit$validY
+    calib.pred <- fit$validPrediction[, 1]
 
   } else {  # intermediate fusion
 
-    if (is.null(fit$y_pred) || is.null(fit$y_valid)) {
-      stop("`fit` must contain `y_pred` and `y_valid` for intermediate fusion.",
-           call. = FALSE)
-    }
+    # if (is.null(fit$y_pred) || is.null(fit$y_valid)) {
+    #   stop("`fit` must contain `y_pred` and `y_valid` for intermediate fusion.",
+    #        call. = FALSE)
+    # }
 
-    calib.pred <- fit$y_pred
-    trueY <- fit$y_valid
+    calib.pred <- predict(fit, data_calib)$y_pred
   }
 
   ## Conformal score computation
-  conformal_scores <- abs(as.numeric(calib.pred) - as.numeric(trueY))
+  conformal_scores <- unlist(abs(calib.pred - trueY))
   n <- length(conformal_scores)
 
   ## Finite-sample conformal quantile
-  q_level <- ceiling((n + 1) * conf_level) / n
+  # q_level <- ceiling((n + 1) * conf_level / n)
   d <- as.numeric(
-    stats::quantile(conformal_scores, probs = q_level, type = 1)
+    stats::quantile(conformal_scores, probs = conf_level, type = 1)
   )
 
   ## Output

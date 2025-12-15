@@ -22,6 +22,7 @@ Authors@R: c(
 Description: Coracle is a conformalized framework for multimodal AI that seamlessly adapts to early, late, and intermediate fusion. It provides theoretical marginal confidence guarantees and achieves valid finite-sample coverage without relying on distributional assumptions.
 License: MIT + file LICENSE
 Encoding: UTF-8
+Imports: dplyr, caret, SuperLearner
 Remotes: 
   himelmallick/BayesCOOP,
   himelmallick/IntegratedLearner

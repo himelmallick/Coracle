@@ -4,12 +4,15 @@
 \alias{conformalScore}
 \title{conformalScore}
 \usage{
-conformalScore(fit, fusion_choice = "early", conf_level = 0.95)
+conformalScore(fit, data_calib, fusion_choice = "early", conf_level = 0.95)
 }
 \arguments{
 \item{fit}{A fitted model object. For early and late fusion, this should be an
 \emph{IntegratedLearner} object. For intermediate fusion, this should be a
 \emph{BayesCOOP} object.}
+
+\item{data_calib}{Calibration data list containing feature_table, feature_metadata,
+and sample_metadata. See \emph{IntegratedLearner} for details.}
 
 \item{fusion_choice}{Fusion strategy to use. One of \code{"early"}, \code{"intermediate"}, or
 \code{"late"}. Default is \code{"early"}.}
