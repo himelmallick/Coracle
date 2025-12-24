@@ -51,7 +51,7 @@ A list with components:
 
 For an in-depth workflow including real data preprocessing, baseline comparisons, and performance benchmarking, please see the full tutorial:
 
-📄 [View the Coracle Tutorial](https://raw.githack.com/himelmallick/Coracle/vignettes/Coracle.html)
+📄 [View the Coracle Tutorial](https://raw.githack.com/himelmallick/Coracle/master/vignettes/Coracle.html)
 
 ---
 
