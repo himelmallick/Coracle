@@ -110,3 +110,10 @@ filter_features <- function(x, abd_threshold = 0, prev_threshold = 0.1) {
   x <- x[, setdiff(names(x), nzv_x)]
   return(x)
 }
+
+# Parse the interval columns
+parse_interval = function(interval) {
+  interval = gsub("\\[|\\]", "", interval)
+  limits = strsplit(interval, ",")[[1]]
+  c(lower = as.numeric(limits[1]), upper = as.numeric(limits[2]))
+}
