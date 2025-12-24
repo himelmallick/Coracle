@@ -1,0 +1,389 @@
+---
+title: "Coracle: End-to-End Tutorial"
+author: "Saptarshi Roy, Sreya Sarkar, Himel Mallick"
+output:
+  html_document:
+    theme: readable
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: false
+date: "2025-12-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Overview
+
+In this tutorial, we work through a complete conformal workflow using **Coracle**.
+
+**Coracle** is a conformalized framework for multimodal AI with continuous outcomes that adapts to early, late, and intermediate fusion. It also provides theoretical marginal confidence guarantees and achieves valid finite-sample coverage without relying on distributional assumptions.
+
+Here, we applied Coracle to a pregnancy dataset to produce finite-sample valid prediction intervals and compared its coverage behavior against prediction intervals using BART and BayesCOOP. The results illustrate how Coracle provides robust, distribution-free uncertainty quantification across fusion paradigms, particularly in settings where competing methods yield overly narrow intervals.
+
+# 1. Installation and Package Setup
+
+We install **Coracle** from GitHub if it is not already available in our R library. We recommend doing this from a fresh R session so we are not accidentally masking a function from an older development build.
+
+```{r install_BayesCOOP}
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+devtools::install_github("himelmallick/Coracle")
+library(Coracle)
+```
+
+Now we load the packages we are going to use in the rest of the tutorial: `Coracle` (main method), `dplyr` (data pre-processing), `bartMachine`, `SuperLearner`, `IntegratedLearner`, `BayesCOOP` (base learner) and `ggplot2` (visualization).
+
+```{r packages, warning=FALSE, message=FALSE}
+if (!requireNamespace("glmnet", quietly = TRUE)) install.packages("glmnet")
+if (!requireNamespace("dplyr", quietly = TRUE)) install.packages("dplyr")
+if (!requireNamespace("IntegratedLearner", quietly = TRUE)) devtools::install_github("himelmallick/IntegratedLearner")
+if (!requireNamespace("BayesCOOP", quietly = TRUE)) devtools::install_github("himelmallick/BayesCOOP")
+if (!requireNamespace("SuperLearner", quietly = TRUE)) install.packages("SuperLearner")
+if (!requireNamespace("bartMachine", quietly = TRUE)) install.packages("bartMachine")
+if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+
+library(glmnet)
+library(dplyr)
+library(IntegratedLearner)
+library(BayesCOOP)
+library(SuperLearner)
+library(bartMachine)
+library(ggplot2)
+
+```
+
+Now we ensure that Java-based models (e.g., BART) have sufficient memory and smoother garbage collection, preventing crashes and long freezes during computation.
+
+```{r, message=FALSE, warning=FALSE}
+options(java.parameters = c("-XX:+UseConcMarkSweepGC", "-Xmx8192m"))
+gc()
+```
+
+# 2. Load the StelzerDOS Dataset
+
+We load the StelzerDOS dataset from the [IntegratedLearner GitHub repository](https://github.com/himelmallick/IntegratedLearner).  
+The dataset is divided into **training** and **testing** sets, each provided as a list containing three components:
+
+- **`feature_table`** – a matrix of features (e.g., microbial taxa, metabolites) with samples as columns and features as rows.  
+- **`feature_metadata`** – annotations describing each feature, such as modality or biological type.  
+- **`sample_metadata`** – accompanying sample-level information, including phenotype, covariates, and grouping variables.
+
+```{r}
+# loading the required datasets
+data_train <- get(load(url("https://raw.githubusercontent.com/himelmallick/IntegratedLearner/master/data/StelzerDOS.RData")))
+data_test <- get(load(url("https://raw.githubusercontent.com/himelmallick/IntegratedLearner/master/data/StelzerDOS_valid.RData")))
+rm(pcl)
+```
+
+# 3. Preprocessing the Data
+
+We remove metabolomics features since it’s not present in the testing set. Then we realign the feature tables to the filtered metadata so that only valid rows and columns remain. Finally, we consider baseline samples only—training samples labeled with “A” and test samples labeled with “G1”—ensuring that both features and sample metadata stay perfectly synchronized across datasets.
+
+```{r}
+# extract info from train data
+feature_table <- data_train$feature_table
+sample_metadata <- data_train$sample_metadata
+feature_metadata <- data_train$feature_metadata
+
+# Remove metabolomics to match with validation
+feature_metadata <- feature_metadata %>% dplyr::filter(featureType!='Metabolomics')
+feature_table <- feature_table[rownames(feature_metadata),]
+
+# consider only baseline observations
+positions <- grep("A", colnames(feature_table), ignore.case = TRUE)
+feature_table <- feature_table[, positions]
+sample_metadata <- sample_metadata[positions, ]
+rm(positions)
+
+# extract info from test data
+feature_table_valid <- data_test$feature_table
+sample_metadata_valid <- data_test$sample_metadata
+feature_metadata_valid <- data_test$feature_metadata
+
+# extracting baseline measurements
+positions <- grep("G1", colnames(feature_table_valid))
+feature_table_valid <- feature_table_valid[, positions]
+sample_metadata_valid <- sample_metadata_valid[positions, ]
+rm(positions)
+```
+
+# 4. Dividing the Training Set into Proper Training Set and Calibration Set
+
+Next we divide the training set into proper training set and calibration set in the ratio of 3:1. 
+
+```{r}
+# construct the proper training set
+set.seed(1234)
+train_elements <- sample(1:dim(feature_table)[2], (0.75*dim(feature_table)[2]), replace = FALSE) 
+feature_table_train <- t(t(feature_table)[train_elements, ])
+sample_metadata_train <- sample_metadata[train_elements, ]
+feature_metadata_train <- feature_metadata
+
+# construct the calibration set 
+feature_table_calib <- t(t(feature_table)[-train_elements, ])
+sample_metadata_calib <- sample_metadata[-train_elements, ]
+feature_metadata_calib <- feature_metadata
+```
+
+We filter low-prevalence features and ensure common features across
+training, calibration, and validation sets.
+
+```{r}
+# Filtering of features and selecting common features across proper train, calib and validation sets
+
+## Filtering of features from proper training set
+data_train <- list(feature_table = feature_table_train, sample_metadata = sample_metadata_train, feature_metadata = feature_metadata_train)
+xList_train <- Coracle:::gen_datalist(data_train)$xList; y_train <- Coracle:::gen_datalist(data_train)$y
+xList_train <- lapply(xList_train, function(foo) Coracle:::filter_features(foo, abd_thresh = 0, prev_thresh = 0.1))
+
+## Filtering of features from calibration set
+data_calib <- list(feature_table = feature_table_calib, sample_metadata = sample_metadata_calib, feature_metadata = feature_metadata_calib)
+xList_calib <- Coracle:::gen_datalist(data_calib)$xList; y_calib <- Coracle:::gen_datalist(data_calib)$y
+xList_calib <- lapply(xList_calib, function(foo) Coracle:::filter_features(foo, abd_thresh = 0, prev_thresh = 0.1))
+
+## Filtering of features from validation set
+data_valid <- list(feature_table = feature_table_valid, sample_metadata = sample_metadata_valid, feature_metadata = feature_metadata_valid)
+xList_valid <- Coracle:::gen_datalist(data_valid)$xList; y_valid <- Coracle:::gen_datalist(data_valid)$y
+xList_valid <- lapply(xList_valid, function(foo) Coracle:::filter_features(foo, abd_thresh = 0, prev_thresh = 0.1))
+
+# Selecting common features across proper training, calibration and validation set 
+keep_features <- vector("list", length = length(xList_train))
+for(i in 1:length(keep_features)) {
+  vec_list <- list(
+    colnames(xList_train[[i]]),
+    colnames(xList_calib[[i]]),
+    colnames(xList_valid[[i]])
+  )
+    
+  keep_features[[i]] <- Reduce(intersect, vec_list)
+  xList_train[[i]] <- as.matrix(xList_train[[i]][, keep_features[[i]], drop = FALSE])
+  xList_calib[[i]] <- as.matrix(xList_calib[[i]][, keep_features[[i]], drop = FALSE])
+  xList_valid[[i]] <- as.matrix(xList_valid[[i]][, keep_features[[i]], drop = FALSE])
+}
+  
+# Reconstruct data into original format
+data_train <- Coracle:::reconstruct_data(xList_train, y_train)
+data_calib <- Coracle:::reconstruct_data(xList_calib, y_calib)
+data_valid <- Coracle:::reconstruct_data(xList_valid, y_valid)
+```
+
+# 5. Running Base Learner Models for Different Fusion Choices
+
+We fit base learner models under three distinct fusion strategies—early, late, and intermediate—to assess how the point of multimodal integration affects predictive performance and uncertainty quantification. Specifically, [IntegratedLearner](https://github.com/himelmallick/IntegratedLearner) is used to implement early and late fusion, while [BayesCOOP](https://github.com/himelmallick/BayesCOOP) is employed for intermediate fusion.
+
+```{r, message=FALSE, echo=FALSE, results = "hide", warning=FALSE}
+# Different fusion choices
+fusion_choice = c("early", "late", "intermediate")
+
+# Running IntegratedLearner for early and late fusion
+fit <- IntegratedLearner(feature_table = data_train$feature_table, sample_metadata = data_train$sample_metadata, feature_metadata = data_train$feature_metadata, feature_table_valid = data_calib$feature_table, sample_metadata_valid = data_calib$sample_metadata, folds = 5, seed = 123, base_learner = "SL.BART", base_screener = "All", meta_learner = "SL.nnls.auc", run_concat = TRUE, run_stacked = TRUE, verbose = FALSE, print_learner = FALSE, refit.stack = TRUE, family = gaussian())
+
+# Running BayesCOOP for intermediate fusion
+fit_bcoop <- BayesCOOP(data_train = data_train)
+```
+
+# 6. Run Coracle
+
+Here, we run `Coracle` for different fusion choices and store the output in a dataframe. 
+
+```{r}
+# Running Coracle
+conformal_pred = Coracle(fit = fit,
+                    fit_coop = fit_bcoop,
+                    data_calib,
+                    data_valid,
+                    fusion_choice = c("late", "early", "intermediate"),
+                    conf_level = 0.95)
+df = conformal_pred$df
+```
+
+# 7. Performance Comparison
+
+We compare the performance of Coracle with prediction intervals derived from BART under early and late fusion strategies, as well as from BayesCOOP under intermediate fusion. To ensure a fair and consistent comparison across methods, we use the same training dataset (`data_train`) for model fitting and the same independent validation dataset (`data_valid`) for evaluating the resulting prediction intervals.
+
+```{r, message=FALSE, echo=FALSE, results = "hide", warning=FALSE}
+options(java.parameters = c("-XX:+UseConcMarkSweepGC", "-Xmx8192m"))
+gc()
+
+# Comparison with BART
+fit_bart <- IntegratedLearner(feature_table = data_train$feature_table, sample_metadata = data_train$sample_metadata, feature_metadata = data_train$feature_metadata, feature_table_valid = data_valid$feature_table, sample_metadata_valid = data_valid$sample_metadata, folds = 5, seed = 123, base_learner = "SL.BART", base_screener = "All", meta_learner = "SL.nnls.auc", run_concat = TRUE, run_stacked = TRUE, verbose = FALSE, print_learner = FALSE, refit.stack = TRUE, family = gaussian())
+
+# Extract the posterior samples for the early fusion
+SL_fit_concat_BART = fit_bart$SL_fits$SL_fit_concat
+model_concat  =  SL_fit_concat_BART$fitLibrary[[1]]$object
+post_samples_concat = bart_machine_get_posterior(model_concat, as.data.frame(t(data_valid$feature_table )))$y_hat_posterior_samples
+      
+# Extract the posterior samples for the late fusion
+weights <- fit_bart$weights
+dataX <- fit_bart$X_train_layers
+dataList <- Coracle:::data_preprocess(feature_table = data_valid$feature_table, sample_metadata = data_valid$sample_metadata, feature_metadata = data_valid$feature_metadata)$dataList
+post_samples_stacked <- vector("list", length(weights))
+names(post_samples_stacked) <- names(dataX)
+for(i in seq_along(post_samples_stacked)){
+    post_samples_stacked[[i]] <- bart_machine_get_posterior(fit_bart$model_fits$model_layers[[i]], as.data.frame(dataList[[i]]))$y_hat_posterior_samples
+}
+post_samples_stacked <-Reduce('+', Map('*', post_samples_stacked, weights))
+```
+
+```{r}
+# Construct the BART prediction interval for early fusion
+BART_early_interval = t(apply(post_samples_concat, 1, quantile, probs = c(0.025, 0.975)))
+BART_early_lower= as.vector(BART_early_interval[, 1])
+BART_early_upper = as.vector(BART_early_interval[, 2])
+
+# Construct the BART prediction interval for late fusion
+BART_late_interval = t(apply(post_samples_stacked, 1, quantile, probs = c(0.025, 0.975)))
+BART_late_lower = as.vector(BART_late_interval[, 1])
+BART_late_upper = as.vector(BART_late_interval[, 2])
+```
+
+```{r, message=FALSE, warning=FALSE}
+predict_bcoop <- predict(fit_bcoop, newdata = data_valid)
+
+# Construct BayesCOOP prediction interval for intermediate fusion
+BayesCOOP_lower = apply((predict_bcoop$y_samples + mean(predict_bcoop$y_valid)), 2, quantile, probs = 0.025)
+BayesCOOP_upper = apply((predict_bcoop$y_samples + mean(predict_bcoop$y_valid)), 2, quantile, probs = 0.975)
+```
+
+```{r}
+# Obtaining the prediction intervals for Coracle
+base_learner = "SL.BART"
+base_method = sub(".*\\.", "", base_learner)
+
+Coracle_early_lower = sapply(df[["Coracle(early)"]], function(x) Coracle:::parse_interval(x)[1])
+Coracle_early_upper = sapply(df[["Coracle(early)"]], function(x) Coracle:::parse_interval(x)[2])
+Coracle_late_lower = sapply(df[["Coracle(late)"]], function(x) Coracle:::parse_interval(x)[1])
+Coracle_late_upper = sapply(df[["Coracle(late)"]], function(x) Coracle:::parse_interval(x)[2])
+Coracle_intermediate_lower = sapply(df[["Coracle(intermediate)"]], function(x) Coracle:::parse_interval(x)[1])
+Coracle_intermediate_upper = sapply(df[["Coracle(intermediate)"]], function(x) Coracle:::parse_interval(x)[2])
+```
+
+```{r}
+# Comparison of prediction intervals
+df_new <- data.frame(Subjects = df$subjectID, TrueY = data_valid$sample_metadata$Y, Coracle_early_lower = Coracle_early_lower, Coracle_early_upper = Coracle_early_upper,
+                     Coracle_intermediate_lower = Coracle_intermediate_lower, Coracle_intermediate_upper = Coracle_intermediate_upper,
+                     Coracle_late_lower = Coracle_late_lower, Coracle_late_upper = Coracle_late_upper,
+                     BayesCOOP_lower = BayesCOOP_lower, BayesCOOP_upper = BayesCOOP_upper,
+                     BART_early_lower = BART_early_lower, BART_early_upper = BART_early_upper,
+                     BART_late_lower = BART_late_lower, BART_late_upper = BART_late_upper)
+
+rownames(df_new) <- 1:length(data_valid$sample_metadata$Y)
+
+inside_Coracle_early <- with(df_new, TrueY >= Coracle_early_lower & TrueY <= Coracle_early_upper)
+inside_Coracle_intermediate  <- with(df_new, TrueY >= Coracle_intermediate_lower & TrueY <= Coracle_intermediate_upper)
+inside_Coracle_late  <- with(df_new, TrueY >= Coracle_late_lower & TrueY <= Coracle_late_upper)
+inside_BART_early  <- with(df_new, TrueY >= BART_early_lower & TrueY <= BART_early_upper)
+inside_BayesCOOP <- with(df_new, TrueY >= BayesCOOP_lower & TrueY <= BayesCOOP_upper)
+inside_BART_late  <- with(df_new, TrueY >= BART_late_lower & TrueY <= BART_late_upper)
+
+# Find points which are within the predicted intervals of at least one Coracle method but are not within the predicted intervals of any of the compared methods (BART, BayesCOOP)
+df_new$mark <- (
+  (inside_Coracle_early | inside_Coracle_intermediate | inside_Coracle_late) &
+    (!inside_BART_early & !inside_BART_late & !inside_BayesCOOP)
+)
+
+# Find points which are within the predicted intervals of all the methods
+df_new$all <- (
+  inside_Coracle_early & inside_Coracle_intermediate & inside_Coracle_late &
+    inside_BART_early & inside_BART_late & inside_BayesCOOP
+)
+
+## True Value Status 
+df_new$true_status <- "True Value"
+df_new$true_status[df_new$all]  <- "Consensus"
+df_new$true_status[df_new$mark] <- "Coracle-only"
+
+df_new$true_status <- factor(
+  df_new$true_status,
+  levels = c("True Value", "Coracle-only", "Consensus")
+)
+```
+
+# 8. Visualization
+
+```{r}
+## Plot
+p <- ggplot(df_new, aes(x = factor(Subjects))) +
+  
+  ## ---- INTERVALS (COLOR LEGEND) ----
+geom_errorbar(aes(ymin = Coracle_early_lower, ymax = Coracle_early_upper, color = "Coracle (Early)"),
+              width = 0.2, position = position_nudge(x = -0.2)) +
+  geom_errorbar(aes(ymin = Coracle_late_lower, ymax = Coracle_late_upper, color = "Coracle (Late)"),
+                width = 0.2, position = position_nudge(x = -0.1)) +
+  geom_errorbar(aes(ymin = Coracle_intermediate_lower, ymax = Coracle_intermediate_upper, color = "Coracle (Intermediate)"),
+                width = 0.2, position = position_nudge(x = 0)) +
+  geom_errorbar(aes(ymin = BART_early_lower, ymax = BART_early_upper, color = "Bart (Early)"),
+                width = 0.2, position = position_nudge(x = 0.1)) +
+  geom_errorbar(aes(ymin = BayesCOOP_lower, ymax = BayesCOOP_upper,
+                    color = "BayesCOOP (Intermediate)"),
+                width = 0.2, position = position_nudge(x = 0.2)) +
+  geom_errorbar(aes(ymin = BART_late_lower, ymax = BART_late_upper, color = "Bart (Late)"),
+                width = 0.2, position = position_nudge(x = 0.3)) +
+  
+  ## ---- TRUE VALUES (FILL LEGEND) ----
+geom_point(
+  aes(y = TrueY, fill = true_status),
+  shape = 22,           # filled square
+  size  = 3.5,
+  color = "black",
+  stroke = 0.3
+) +
+  
+  ## ---- LEGENDS ----
+scale_color_manual(
+  name = "Intervals",
+  values = c(
+    "Coracle (Early)"        = "#0072B2",
+    "Coracle (Late)"         = "#009E73",
+    "Coracle (Intermediate)" = "#D55E00",
+    "Bart (Early)"           = "#E69F00",
+    "Bart (Late)"            = "#56B4E9",
+    "BayesCOOP (Intermediate)" = "#CC79A7"
+  )
+) +
+  
+  scale_fill_manual(
+    name = "",
+    values = c(
+      "True Value"   = "#999999",
+      "Consensus"    = "red",
+      "Coracle-only" = "blue"
+    ),
+    labels = c(
+      "True Value",
+      "Consensus (all methods cover the true value)",
+      "Coracle-only (only Coracle covers the true value)"
+    )
+  ) +
+  
+  ## ---- LABELS & THEME ----
+labs(
+  title = "Comparison of Prediction Intervals for StelzerDOS",
+  x = "Subjects",
+  y = "Predicted Labor Onset"
+) +
+  theme_classic() +
+  theme(
+    axis.text.x  = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5, size = 12)
+  ) +
+  scale_x_discrete(expand = expansion(mult = c(0.05, 0.05)))
+
+print(p)
+```
+
+The figure compares 95% prediction intervals for labor onset across multiple fusion strategies and learning paradigms. Overall, the Coracle-based intervals (early, intermediate, and late fusion) are consistently wider and more stable than those from BART and BayesCOOP, reflecting their distribution-free construction and explicit calibration for coverage. Several subjects exhibit consensus points (blue squares), where the true labor onset lies within all competing intervals, indicating agreement across methods. In contrast, Coracle-only points (red squares) highlight subjects for whom the true value is covered exclusively by Coracle, while being missed by BART and BayesCOOP. These cases illustrate that Coracle can provide additional robustness in uncertainty quantification, particularly for difficult or outlying subjects where model-based Bayesian or ensemble methods produce intervals that are too narrow. Taken together, the figure suggests that while different fusion strategies yield comparable central predictions, Coracle offers more reliable coverage guarantees across subjects, especially in regimes where competing methods fail to adequately capture uncertainty.
+
+# 9. Citation
+
+
+
+# 10. Session Info
+
+```{r sessioninfo}
+sessionInfo()
+```
