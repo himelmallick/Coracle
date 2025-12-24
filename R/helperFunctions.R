@@ -65,6 +65,43 @@ reconstruct_data <- function(xList, y) {
   )
 }
 
+# Function to preprocess the raw data
+data_preprocess = function(feature_table, sample_metadata, feature_metadata){
+
+  #########################
+  # Separate omics layers #
+  #########################
+
+  feature_metadata$featureType = as.factor(feature_metadata$featureType)
+  name_layers = with(droplevels(feature_metadata), list(levels = levels(featureType)), nlevels = nlevels(featureType))$levels
+
+  #############
+  # Extract y #
+  #############
+
+  y = as.matrix(sample_metadata$Y)
+
+  dataList = vector("list", length = length(name_layers))
+  names(dataList) = name_layers
+
+  # Store data matrices
+  for (i in seq_along(name_layers)){
+    # Filter genes which belong to featureType[i]
+    include_list = feature_metadata %>% dplyr::filter(featureType == name_layers[i])
+
+    #Subset feature rows for features in Type[i]
+    t_dat_slice = feature_table[rownames(feature_table) %in% include_list$featureID, ]
+
+    #Assign feature rows for Type[i] to dataList[i]
+    dat_slice = as.data.frame(t(t_dat_slice))
+    dataList[[i]] = as.matrix(dat_slice)
+    rm(dat_slice); rm(t_dat_slice); rm(include_list)
+  }
+
+  return(list(y = y, dataList = dataList))
+}
+
+
 # Function to filter features according to a fixed abundance and prevalence threshold
 filter_features <- function(x, abd_threshold = 0, prev_threshold = 0.1) {
   # x is a data frame
