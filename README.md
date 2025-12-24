@@ -49,7 +49,7 @@ A list with components:
 
 ## 📘 Full Tutorial
 
-For an in-depth workflow — including real data preprocessing, baseline comparisons, and performance benchmarking — please see the full tutorial:
+For an in-depth workflow including real data preprocessing, baseline comparisons, and performance benchmarking, please see the full tutorial:
 
 📄 [View the Coracle Tutorial](https://raw.githack.com/himelmallick/Coracle/master/vignettes/Coracle.html)
 
