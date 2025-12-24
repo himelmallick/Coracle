@@ -28,12 +28,12 @@ Here is a minimal call to `Coracle()`:
 
 ```r
 cml <- Coracle::Conformal(
-  fit = NULL,           # list with feature_table, sample_metadata and feature_metadata (train)
-  fit_coop = NULL,   # currently only continuous outcomes are supported
+  fit = NULL,           # A fitted \emph{IntegratedLearner} object from early/late fusion
+  fit_coop = NULL,      # A fitted \emph{BayesCOOP} object for intermediate fusion
   data_calib,           # list with feature_table, sample_metadata and feature_metadata (calibration set)
   data_valid,           # list with feature_table, sample_metadata and feature_metadata (validation set)
   fusion_choice = c("late", "early", "intermediate"), # choice of different fusion schemes
-  conf_level = 0.95 # desired marginal confidence level
+  conf_level = 0.95     # desired marginal confidence level
 )
 ```
 
