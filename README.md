@@ -45,9 +45,21 @@ A list with components:
 - `coverage`: A list containing the coverage for different fusion choices
 - `conf_level`: Desired marginal confidence level
 
+---
+
 ## 📘 Full Tutorial
 
 For an in-depth workflow — including real data preprocessing, baseline comparisons, and performance benchmarking — please see the full tutorial:
 
-📄 [View the BayesCOOP Tutorial](https://raw.githack.com/himelmallick/Coracle)
+📄 [View the Coracle Tutorial](https://raw.githack.com/himelmallick/Coracle/master/vignettes/Coracle.html)
+
+---
+
+## 📚 Citation
+
+---
+
+## 🐞 Issues
+
+We are happy to troubleshoot any issues with the package. Please contact the authors via email or open an issue in the [GitHub repository](https://github.com/himelmallick/Coracle/issues).
 
