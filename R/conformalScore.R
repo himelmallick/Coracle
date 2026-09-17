@@ -71,11 +71,13 @@ conformalScore <- function(fit, data_calib,
   conformal_scores <- unlist(abs(calib.pred - trueY))
   n <- length(conformal_scores)
 
-  ## Finite-sample conformal quantile
-  # q_level <- ceiling((n + 1) * conf_level / n)
-  d <- as.numeric(
-    stats::quantile(conformal_scores, probs = conf_level, type = 1)
-  )
+  ## Finite-sample split-conformal cutoff: the k-th order statistic of the
+  ## calibration scores with k = ceiling((n + 1) * conf_level), and Inf when
+  ## k > n. Note that quantile(., probs = conf_level, type = 1) returns the
+  ## ceiling(n * conf_level)-th order statistic, one too low, which is
+  ## anti-conservative by roughly 1 / (n + 1).
+  k <- ceiling((n + 1) * conf_level)
+  d <- if (k > n) Inf else sort(conformal_scores)[k]
 
   ## Output
   out <- list(

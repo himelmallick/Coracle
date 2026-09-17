@@ -104,7 +104,7 @@ Coracle <- function(fit = NULL,
       paste0("[", round(lower, 3), ", ", round(upper, 3), "]")
 
     df[[paste0("Coverage(", tag, ")")]] <<-
-      as.integer(Y_valid > lower & Y_valid < upper)
+      as.integer(Y_valid >= lower & Y_valid <= upper)
 
     mean(df[[paste0("Coverage(", tag, ")")]])
   }
@@ -139,7 +139,20 @@ Coracle <- function(fit = NULL,
       conf_level = conf_level
     )
 
-    layer_preds <- lapply(layers, function(layer) {
+    ## Column order the stacked meta-learner was trained on. IntegratedLearner
+    ## orders layers by levels(droplevels(factor(featureType))), i.e.
+    ## alphabetically, while `layers` above is unique(featureType), i.e. order of
+    ## appearance. predict.sl_nnls_auc is crossprod(t(as.matrix(newdata)), coef),
+    ## a positional multiply, so a mismatch applies each weight to the wrong
+    ## view. Taking the order from SL_fit_stacked$X is authoritative and also
+    ## respects any layers dropped by drop_poor_performing_layers.
+    layers_stacked <- colnames(fit$SL_fits$SL_fit_stacked$X)
+    if (is.null(layers_stacked)) {
+      stop("`SL_fit_stacked$X` has no column names; cannot recover the ",
+           "meta-learner's layer order.", call. = FALSE)
+    }
+
+    layer_preds <- lapply(layers_stacked, function(layer) {
       idx <- feature_metadata$featureType == layer
       X_layer <- as.data.frame(t(feature_table[idx, ]))
       predict.SuperLearner(
@@ -149,7 +162,7 @@ Coracle <- function(fit = NULL,
     })
 
     X_valid <- as.data.frame(do.call(cbind, layer_preds))
-    names(X_valid) <- layers
+    names(X_valid) <- layers_stacked
 
     pred <- predict.SuperLearner(cs$fit, newdata = X_valid)$pred
 
