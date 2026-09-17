@@ -77,7 +77,6 @@ Coracle <- function(fit = NULL,
   sample_metadata <- data_valid$sample_metadata
   Y_valid <- sample_metadata$Y
   subjectID <- sample_metadata$subjectID
-  layers <- unique(feature_metadata$featureType)
 
   ## -----------------------------
   ## Initialize output
@@ -141,8 +140,8 @@ Coracle <- function(fit = NULL,
 
     ## Column order the stacked meta-learner was trained on. IntegratedLearner
     ## orders layers by levels(droplevels(factor(featureType))), i.e.
-    ## alphabetically, while `layers` above is unique(featureType), i.e. order of
-    ## appearance. predict.sl_nnls_auc is crossprod(t(as.matrix(newdata)), coef),
+    ## alphabetically, which is not the same as unique(featureType), i.e. order
+    ## of appearance. predict.sl_nnls_auc is crossprod(t(as.matrix(newdata)), coef),
     ## a positional multiply, so a mismatch applies each weight to the wrong
     ## view. Taking the order from SL_fit_stacked$X is authoritative and also
     ## respects any layers dropped by drop_poor_performing_layers.

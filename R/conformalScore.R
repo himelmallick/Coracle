@@ -28,7 +28,7 @@
 #' \item{fit}{Fitted model object.}
 #' \item{conformal_scores}{Vector of conformal scores.}
 #'
-#' @importFrom stats quantile predict
+#' @importFrom stats predict
 #'
 #' @export
 conformalScore <- function(fit, data_calib,
